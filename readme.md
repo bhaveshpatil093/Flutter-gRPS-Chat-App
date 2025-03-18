@@ -138,8 +138,8 @@ chmod +x scripts/generate_grpc.sh
 ./scripts/generate_grpc.sh
 
 # Run the application
-flutter run
-```
+   flutter run
+   ```
 
 ## Project Structure
 
