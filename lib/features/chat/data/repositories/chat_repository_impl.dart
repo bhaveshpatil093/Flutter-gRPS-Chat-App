@@ -1,154 +1,130 @@
 import 'dart:async';
 import 'dart:io';
-
-import 'package:amplify_storage_s3/amplify_storage_s3.dart';
 import 'package:dartz/dartz.dart';
 import 'package:grpc/grpc.dart';
-import 'package:path/path.dart' as path;
+import 'package:chat_app/core/error/failures.dart';
+import 'package:chat_app/features/chat/domain/entities/message.dart' as domain;
+import 'package:chat_app/features/chat/domain/repositories/chat_repository.dart';
+import 'package:chat_app/features/chat/data/models/chat.pb.dart' as grpc;
+import 'package:chat_app/features/chat/data/models/chat.pbgrpc.dart' as grpc;
 import 'package:uuid/uuid.dart';
-
-import 'package:flutter_grpc_chat/core/error/failures.dart';
-import 'package:flutter_grpc_chat/features/chat/data/datasources/chat_grpc_client.dart';
-import 'package:flutter_grpc_chat/features/chat/domain/entities/message.dart';
-import 'package:flutter_grpc_chat/features/chat/domain/repositories/chat_repository.dart';
-import 'package:flutter_grpc_chat/features/chat/data/models/message_model.dart';
+import 'package:fixnum/fixnum.dart';
 
 class ChatRepositoryImpl implements ChatRepository {
-  final ChatGrpcClient _grpcClient;
-  final _uuid = const Uuid();
+  final grpc.ChatServiceClient _client;
 
-  ChatRepositoryImpl(this._grpcClient);
+  ChatRepositoryImpl(this._client);
 
   @override
-  Future<Either<Failure, void>> sendMessage(Message message) async {
+  Future<Either<Failure, domain.Message>> sendMessage(domain.Message message) async {
     try {
-      final messageModel = MessageModel.fromEntity(message);
-      await _grpcClient.sendMessage(messageModel);
-      return const Right(null);
-    } on GrpcError catch (e) {
-      return Left(ServerFailure(
-        message: e.message ?? 'Failed to send message',
-        code: e.code.toString(),
-      ));
+      final request = grpc.SendMessageRequest(
+        message: grpc.Message(
+          id: message.id,
+          chatId: message.chatId,
+          senderId: message.senderId,
+          content: message.content,
+          type: _domainMessageTypeToGrpc(message.type),
+          timestamp: message.timestamp.millisecondsSinceEpoch ~/ 1000,
+          isRead: message.isRead,
+          mediaUrl: message.mediaUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize?.toInt() ?? 0,
+        ),
+      );
+
+      final response = await _client.sendMessage(request);
+      return Right(_grpcMessageToDomain(response.message));
     } catch (e) {
-      return Left(ServerFailure(
-        message: 'An unexpected error occurred',
-      ));
+      return Left(ServerFailure(e.toString()));
     }
   }
 
   @override
-  Future<Either<Failure, List<Message>>> getMessages({
-    required String chatId,
-    int? limit,
-    String? lastMessageId,
-  }) async {
+  Future<Either<Failure, List<domain.Message>>> getMessages(String chatId, {int limit = 50}) async {
     try {
-      final messages = await _grpcClient.getMessages(
-        chatId: chatId,
-        limit: limit,
-        lastMessageId: lastMessageId,
-      );
-      return Right(messages.map((m) => m.toEntity()).toList());
-    } on GrpcError catch (e) {
-      return Left(ServerFailure(
-        message: e.message ?? 'Failed to get messages',
-        code: e.code.toString(),
-      ));
+      final request = grpc.GetMessagesRequest(chatId: chatId, limit: limit);
+      final response = await _client.getMessages(request);
+      return Right(response.messages.map(_grpcMessageToDomain).toList());
     } catch (e) {
-      return Left(ServerFailure(
-        message: 'An unexpected error occurred',
-      ));
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
+  Stream<domain.Message> get messageStream {
+    final request = grpc.SubscribeToMessagesRequest();
+    return _client.subscribeToMessages(request).map(_grpcMessageToDomain);
+  }
+
+  @override
+  Future<Either<Failure, String>> uploadMedia(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final request = grpc.UploadMediaRequest(
+        data: bytes,
+        fileName: file.path.split('/').last,
+      );
+
+      final response = await _client.uploadMedia(request);
+      return Right(response.url);
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
     }
   }
 
   @override
   Future<Either<Failure, void>> markMessageAsRead(String messageId) async {
     try {
-      await _grpcClient.markMessageAsRead(messageId);
+      final request = grpc.MarkMessageAsReadRequest(messageId: messageId);
+      await _client.markMessageAsRead(request);
       return const Right(null);
-    } on GrpcError catch (e) {
-      return Left(ServerFailure(
-        message: e.message ?? 'Failed to mark message as read',
-        code: e.code.toString(),
-      ));
     } catch (e) {
-      return Left(ServerFailure(
-        message: 'An unexpected error occurred',
-      ));
+      return Left(ServerFailure(e.toString()));
     }
   }
 
-  @override
-  Future<Either<Failure, String>> uploadMedia(String filePath) async {
-    try {
-      final file = File(filePath);
-      final fileName = '${_uuid.v4()}${path.extension(filePath)}';
-      
-      final result = await Amplify.Storage.uploadFile(
-        local: file,
-        key: fileName,
-        options: StorageUploadFileOptions(
-          accessLevel: StorageAccessLevel.guest,
-          contentType: _getContentType(filePath),
-        ),
-      );
-
-      final url = await Amplify.Storage.getUrl(
-        key: result.key,
-        options: const StorageGetUrlOptions(
-          accessLevel: StorageAccessLevel.guest,
-          expires: 3600, // URL expires in 1 hour
-        ),
-      );
-
-      return Right(url.url);
-    } on StorageException catch (e) {
-      return Left(ServerFailure(
-        message: e.message ?? 'Failed to upload media',
-        code: e.name,
-      ));
-    } catch (e) {
-      return Left(ServerFailure(
-        message: 'An unexpected error occurred',
-      ));
-    }
-  }
-
-  @override
-  Stream<Either<Failure, Message>> getMessageStream(String chatId) {
-    return _grpcClient.getMessageStream(chatId).map(
-      (message) => Right(message.toEntity()),
-      onError: (error) {
-        if (error is GrpcError) {
-          return Left(ServerFailure(
-            message: error.message ?? 'Failed to get message stream',
-            code: error.code.toString(),
-          ));
-        }
-        return Left(ServerFailure(
-          message: 'An unexpected error occurred',
-        ));
-      },
+  domain.Message _grpcMessageToDomain(grpc.Message message) {
+    return domain.Message(
+      id: message.id,
+      chatId: message.chatId,
+      senderId: message.senderId,
+      content: message.content,
+      type: _grpcMessageTypeToDomain(message.type),
+      timestamp: DateTime.fromMillisecondsSinceEpoch(message.timestamp.toInt() * 1000),
+      isRead: message.isRead,
+      mediaUrl: message.hasMediaUrl() ? message.mediaUrl : null,
+      fileName: message.hasFileName() ? message.fileName : null,
+      fileSize: message.hasFileSize() ? message.fileSize.toInt() : null,
     );
   }
 
-  String _getContentType(String filePath) {
-    final extension = path.extension(filePath).toLowerCase();
-    switch (extension) {
-      case '.jpg':
-      case '.jpeg':
-        return 'image/jpeg';
-      case '.png':
-        return 'image/png';
-      case '.gif':
-        return 'image/gif';
-      case '.mp4':
-        return 'video/mp4';
-      case '.pdf':
-        return 'application/pdf';
+  domain.MessageType _grpcMessageTypeToDomain(grpc.MessageType type) {
+    switch (type) {
+      case grpc.MessageType.TEXT:
+        return domain.MessageType.text;
+      case grpc.MessageType.IMAGE:
+        return domain.MessageType.image;
+      case grpc.MessageType.VIDEO:
+        return domain.MessageType.video;
+      case grpc.MessageType.FILE:
+        return domain.MessageType.file;
       default:
-        return 'application/octet-stream';
+        return domain.MessageType.text;
     }
   }
+
+  grpc.MessageType _domainMessageTypeToGrpc(domain.MessageType type) {
+    switch (type) {
+      case domain.MessageType.text:
+        return grpc.MessageType.TEXT;
+      case domain.MessageType.image:
+        return grpc.MessageType.IMAGE;
+      case domain.MessageType.video:
+        return grpc.MessageType.VIDEO;
+      case domain.MessageType.file:
+        return grpc.MessageType.FILE;
+    }
+  }
+} 
 } 

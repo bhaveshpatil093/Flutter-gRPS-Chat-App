@@ -1,11 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
-import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:flutter_grpc_chat/core/error/failures.dart';
-import 'package:flutter_grpc_chat/features/chat/domain/entities/message.dart';
-import 'package:flutter_grpc_chat/features/chat/domain/usecases/send_message_usecase.dart';
-import 'package:flutter_grpc_chat/features/chat/domain/usecases/get_messages_usecase.dart';
+import 'package:chat_app/features/chat/domain/entities/message.dart';
+import 'package:chat_app/features/chat/domain/repositories/chat_repository.dart';
 
 // Events
 abstract class ChatEvent extends Equatable {
@@ -13,6 +12,16 @@ abstract class ChatEvent extends Equatable {
 
   @override
   List<Object?> get props => [];
+}
+
+class GetMessagesRequested extends ChatEvent {
+  final String chatId;
+  final int limit;
+
+  const GetMessagesRequested(this.chatId, {this.limit = 50});
+
+  @override
+  List<Object?> get props => [chatId, limit];
 }
 
 class SendMessageRequested extends ChatEvent {
@@ -24,21 +33,6 @@ class SendMessageRequested extends ChatEvent {
   List<Object?> get props => [message];
 }
 
-class GetMessagesRequested extends ChatEvent {
-  final String chatId;
-  final int? limit;
-  final String? lastMessageId;
-
-  const GetMessagesRequested({
-    required this.chatId,
-    this.limit,
-    this.lastMessageId,
-  });
-
-  @override
-  List<Object?> get props => [chatId, limit, lastMessageId];
-}
-
 class NewMessageReceived extends ChatEvent {
   final Message message;
 
@@ -46,6 +40,15 @@ class NewMessageReceived extends ChatEvent {
 
   @override
   List<Object?> get props => [message];
+}
+
+class MarkMessageAsReadRequested extends ChatEvent {
+  final String messageId;
+
+  const MarkMessageAsReadRequested(this.messageId);
+
+  @override
+  List<Object?> get props => [messageId];
 }
 
 // States
@@ -78,40 +81,36 @@ class MessageSent extends ChatState {
   List<Object?> get props => [message];
 }
 
-class ChatError extends ChatState {
-  final Failure failure;
+class MessageRead extends ChatState {
+  final String messageId;
 
-  const ChatError(this.failure);
+  const MessageRead(this.messageId);
 
   @override
-  List<Object?> get props => [failure];
+  List<Object?> get props => [messageId];
 }
 
-// Bloc
+class MessageError extends ChatState {
+  final String message;
+
+  const MessageError(this.message);
+
+  @override
+  List<Object?> get props => [message];
+}
+
 class ChatBloc extends Bloc<ChatEvent, ChatState> {
-  final SendMessageUseCase sendMessageUseCase;
-  final GetMessagesUseCase getMessagesUseCase;
-  StreamSubscription? _messageStreamSubscription;
+  final ChatRepository _chatRepository;
+  StreamSubscription? _messageSubscription;
 
-  ChatBloc({
-    required this.sendMessageUseCase,
-    required this.getMessagesUseCase,
-  }) : super(ChatInitial()) {
-    on<SendMessageRequested>(_onSendMessageRequested);
+  ChatBloc(this._chatRepository) : super(ChatInitial()) {
     on<GetMessagesRequested>(_onGetMessagesRequested);
+    on<SendMessageRequested>(_onSendMessageRequested);
     on<NewMessageReceived>(_onNewMessageReceived);
-  }
+    on<MarkMessageAsReadRequested>(_onMarkMessageAsReadRequested);
 
-  Future<void> _onSendMessageRequested(
-    SendMessageRequested event,
-    Emitter<ChatState> emit,
-  ) async {
-    emit(ChatLoading());
-    final result = await sendMessageUseCase(event.message);
-
-    result.fold(
-      (failure) => emit(ChatError(failure)),
-      (_) => emit(MessageSent(event.message)),
+    _messageSubscription = _chatRepository.messageStream.listen(
+      (message) => add(NewMessageReceived(message)),
     );
   }
 
@@ -120,15 +119,29 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     Emitter<ChatState> emit,
   ) async {
     emit(ChatLoading());
-    final result = await getMessagesUseCase(
-      chatId: event.chatId,
+
+    final result = await _chatRepository.getMessages(
+      event.chatId,
       limit: event.limit,
-      lastMessageId: event.lastMessageId,
     );
 
     result.fold(
-      (failure) => emit(ChatError(failure)),
+      (failure) => emit(MessageError(failure.message)),
       (messages) => emit(MessagesLoaded(messages)),
+    );
+  }
+
+  Future<void> _onSendMessageRequested(
+    SendMessageRequested event,
+    Emitter<ChatState> emit,
+  ) async {
+    emit(ChatLoading());
+
+    final result = await _chatRepository.sendMessage(event.message);
+
+    result.fold(
+      (failure) => emit(MessageError(failure.message)),
+      (_) => emit(MessageSent(event.message)),
     );
   }
 
@@ -142,14 +155,21 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     }
   }
 
-  void startMessageStream(String chatId) {
-    _messageStreamSubscription?.cancel();
-    // Implement message stream subscription
+  Future<void> _onMarkMessageAsReadRequested(
+    MarkMessageAsReadRequested event,
+    Emitter<ChatState> emit,
+  ) async {
+    final result = await _chatRepository.markMessageAsRead(event.messageId);
+
+    result.fold(
+      (failure) => emit(MessageError(failure.message)),
+      (_) => emit(MessageRead(event.messageId)),
+    );
   }
 
   @override
   Future<void> close() {
-    _messageStreamSubscription?.cancel();
+    _messageSubscription?.cancel();
     return super.close();
   }
 } 

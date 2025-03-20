@@ -1,7 +1,7 @@
 import 'package:dartz/dartz.dart';
-import 'package:flutter_grpc_chat/core/error/failures.dart';
-import 'package:flutter_grpc_chat/features/chat/domain/entities/message.dart';
-import 'package:flutter_grpc_chat/features/chat/domain/repositories/chat_repository.dart';
+import '../../../../core/error/failures.dart';
+import '../entities/message.dart';
+import '../repositories/chat_repository.dart';
 
 class SendMessageUseCase {
   final ChatRepository repository;
@@ -9,6 +9,6 @@ class SendMessageUseCase {
   SendMessageUseCase(this.repository);
 
   Future<Either<Failure, void>> call(Message message) async {
-    return await repository.sendMessage(message);
+    return repository.sendMessage(message);
   }
 } 

@@ -1,15 +1,13 @@
+import 'dart:io';
+
 import 'package:dartz/dartz.dart';
-import 'package:flutter_grpc_chat/core/error/failures.dart';
-import 'package:flutter_grpc_chat/features/chat/domain/entities/message.dart';
+import 'package:chat_app/core/error/failures.dart';
+import 'package:chat_app/features/chat/domain/entities/message.dart';
 
 abstract class ChatRepository {
-  Future<Either<Failure, void>> sendMessage(Message message);
-  Future<Either<Failure, List<Message>>> getMessages({
-    required String chatId,
-    int? limit,
-    String? lastMessageId,
-  });
-  Future<Either<Failure, void>> markMessageAsRead(String messageId);
-  Future<Either<Failure, String>> uploadMedia(String filePath);
-  Stream<Either<Failure, Message>> getMessageStream(String chatId);
+  Future<Message> sendMessage(Message message);
+  Future<List<Message>> getMessages(String chatId);
+  Stream<Message> subscribeToMessages(String chatId);
+  Future<String> uploadMedia(String filePath, String fileName, int fileSize);
+  Future<void> markMessageAsRead(String messageId);
 } 

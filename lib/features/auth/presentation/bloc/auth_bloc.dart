@@ -1,9 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:flutter_grpc_chat/core/error/failures.dart';
-import 'package:flutter_grpc_chat/features/auth/domain/usecases/sign_in_usecase.dart';
-import 'package:flutter_grpc_chat/features/auth/domain/usecases/sign_up_usecase.dart';
-import 'package:flutter_grpc_chat/features/auth/domain/usecases/sign_out_usecase.dart';
+import 'package:amplify_flutter/amplify_flutter.dart';
 
 // Events
 abstract class AuthEvent extends Equatable {
@@ -13,14 +10,11 @@ abstract class AuthEvent extends Equatable {
   List<Object?> get props => [];
 }
 
-class SignInRequested extends AuthEvent {
+class LoginRequested extends AuthEvent {
   final String email;
   final String password;
 
-  const SignInRequested({
-    required this.email,
-    required this.password,
-  });
+  const LoginRequested({required this.email, required this.password});
 
   @override
   List<Object?> get props => [email, password];
@@ -29,16 +23,11 @@ class SignInRequested extends AuthEvent {
 class SignUpRequested extends AuthEvent {
   final String email;
   final String password;
-  final String username;
 
-  const SignUpRequested({
-    required this.email,
-    required this.password,
-    required this.username,
-  });
+  const SignUpRequested({required this.email, required this.password});
 
   @override
-  List<Object?> get props => [email, password, username];
+  List<Object?> get props => [email, password];
 }
 
 class SignOutRequested extends AuthEvent {}
@@ -67,73 +56,89 @@ class Authenticated extends AuthState {
 class Unauthenticated extends AuthState {}
 
 class AuthError extends AuthState {
-  final Failure failure;
+  final String message;
 
-  const AuthError(this.failure);
+  const AuthError(this.message);
 
   @override
-  List<Object?> get props => [failure];
+  List<Object?> get props => [message];
 }
 
 // Bloc
 class AuthBloc extends Bloc<AuthEvent, AuthState> {
-  final SignInUseCase signInUseCase;
-  final SignUpUseCase signUpUseCase;
-  final SignOutUseCase signOutUseCase;
-
-  AuthBloc({
-    required this.signInUseCase,
-    required this.signUpUseCase,
-    required this.signOutUseCase,
-  }) : super(AuthInitial()) {
-    on<SignInRequested>(_onSignInRequested);
+  AuthBloc() : super(AuthInitial()) {
+    on<LoginRequested>(_onLoginRequested);
     on<SignUpRequested>(_onSignUpRequested);
     on<SignOutRequested>(_onSignOutRequested);
   }
 
-  Future<void> _onSignInRequested(
-    SignInRequested event,
+  Future<void> _onLoginRequested(
+    LoginRequested event,
     Emitter<AuthState> emit,
   ) async {
-    emit(AuthLoading());
-    final result = await signInUseCase(
-      email: event.email,
-      password: event.password,
-    );
+    try {
+      emit(AuthLoading());
 
-    result.fold(
-      (failure) => emit(AuthError(failure)),
-      (userId) => emit(Authenticated(userId)),
-    );
+      final result = await Amplify.Auth.signIn(
+        username: event.email,
+        password: event.password,
+      );
+
+      if (result.isSignedIn) {
+        final user = await Amplify.Auth.getCurrentUser();
+        emit(Authenticated(user.userId));
+      } else {
+        emit(const AuthError('Login failed'));
+      }
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
   }
 
   Future<void> _onSignUpRequested(
     SignUpRequested event,
     Emitter<AuthState> emit,
   ) async {
-    emit(AuthLoading());
-    final result = await signUpUseCase(
-      email: event.email,
-      password: event.password,
-      username: event.username,
-    );
+    try {
+      emit(AuthLoading());
 
-    result.fold(
-      (failure) => emit(AuthError(failure)),
-      (userId) => emit(Authenticated(userId)),
-    );
+      final result = await Amplify.Auth.signUp(
+        username: event.email,
+        password: event.password,
+        options: SignUpOptions(
+          userAttributes: {
+            AuthUserAttributeKey.email: event.email,
+          },
+        ),
+      );
+
+      if (result.isSignUpComplete) {
+        // Auto sign in after signup
+        await _onLoginRequested(
+          LoginRequested(
+            email: event.email,
+            password: event.password,
+          ),
+          emit,
+        );
+      } else {
+        emit(const AuthError('Sign up failed'));
+      }
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
   }
 
   Future<void> _onSignOutRequested(
     SignOutRequested event,
     Emitter<AuthState> emit,
   ) async {
-    emit(AuthLoading());
-    final result = await signOutUseCase();
-
-    result.fold(
-      (failure) => emit(AuthError(failure)),
-      (_) => emit(Unauthenticated()),
-    );
+    try {
+      emit(AuthLoading());
+      await Amplify.Auth.signOut();
+      emit(Unauthenticated());
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
   }
 } 

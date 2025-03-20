@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package chat;
+
+option go_package = "chat/proto";
+
+service ChatService {
+  rpc SendMessage (SendMessageRequest) returns (SendMessageResponse);
+  rpc GetMessages (GetMessagesRequest) returns (GetMessagesResponse);
+  rpc UploadMedia (UploadMediaRequest) returns (UploadMediaResponse);
+  rpc MarkMessageAsRead (MarkMessageAsReadRequest) returns (MarkMessageAsReadResponse);
+  rpc SubscribeToMessages (SubscribeToMessagesRequest) returns (stream Message);
+}
+
+enum MessageType {
+  TEXT = 0;
+  IMAGE = 1;
+  VIDEO = 2;
+  FILE = 3;
+}
+
+message Message {
+  string id = 1;
+  string chat_id = 2;
+  string sender_id = 3;
+  string content = 4;
+  MessageType type = 5;
+  int64 timestamp = 6;
+  bool is_read = 7;
+  string media_url = 8;
+  string file_name = 9;
+  int64 file_size = 10;
+}
+
+message SendMessageRequest {
+  Message message = 1;
+}
+
+message SendMessageResponse {}
+
+message GetMessagesRequest {
+  string chat_id = 1;
+  int32 limit = 2;
+}
+
+message GetMessagesResponse {
+  repeated Message messages = 1;
+}
+
+message UploadMediaRequest {
+  bytes data = 1;
+  string file_name = 2;
+}
+
+message UploadMediaResponse {
+  string url = 1;
+}
+
+message MarkMessageAsReadRequest {
+  string message_id = 1;
+}
+
+message MarkMessageAsReadResponse {}
+
+message SubscribeToMessagesRequest {}
+
+message SubscribeToMessagesResponse {
+  Message message = 1;
+} 

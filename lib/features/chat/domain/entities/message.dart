@@ -7,8 +7,9 @@ enum MessageType {
   file,
 }
 
-class Message extends Equatable {
+class Message {
   final String id;
+  final String chatId;
   final String senderId;
   final String content;
   final MessageType type;
@@ -18,8 +19,9 @@ class Message extends Equatable {
   final String? fileName;
   final int? fileSize;
 
-  const Message({
+  Message({
     required this.id,
+    required this.chatId,
     required this.senderId,
     required this.content,
     required this.type,
@@ -32,6 +34,7 @@ class Message extends Equatable {
 
   Message copyWith({
     String? id,
+    String? chatId,
     String? senderId,
     String? content,
     MessageType? type,
@@ -43,6 +46,7 @@ class Message extends Equatable {
   }) {
     return Message(
       id: id ?? this.id,
+      chatId: chatId ?? this.chatId,
       senderId: senderId ?? this.senderId,
       content: content ?? this.content,
       type: type ?? this.type,
@@ -57,6 +61,7 @@ class Message extends Equatable {
   @override
   List<Object?> get props => [
         id,
+        chatId,
         senderId,
         content,
         type,

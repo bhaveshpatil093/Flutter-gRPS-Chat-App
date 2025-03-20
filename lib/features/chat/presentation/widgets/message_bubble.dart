@@ -1,42 +1,29 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_grpc_chat/features/auth/presentation/bloc/auth_bloc.dart';
-import 'package:flutter_grpc_chat/features/chat/domain/entities/message.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:chat_app/features/chat/domain/entities/message.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
+  final bool isMe;
 
   const MessageBubble({
-    super.key,
+    Key? key,
     required this.message,
-  });
+    required this.isMe,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    final isMe = message.senderId ==
-        (context.read<AuthBloc>().state as Authenticated).userId;
-
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
         decoration: BoxDecoration(
-          color: isMe
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
+          color: isMe ? Theme.of(context).primaryColor : Colors.grey[300],
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
           crossAxisAlignment:
@@ -45,12 +32,10 @@ class MessageBubble extends StatelessWidget {
             _buildMessageContent(context),
             const SizedBox(height: 4),
             Text(
-              DateFormat.Hm().format(message.timestamp),
+              DateFormat('HH:mm').format(message.timestamp),
               style: TextStyle(
                 fontSize: 12,
-                color: isMe
-                    ? Colors.white.withOpacity(0.7)
-                    : Colors.black.withOpacity(0.5),
+                color: isMe ? Colors.white70 : Colors.black54,
               ),
             ),
           ],
@@ -65,77 +50,108 @@ class MessageBubble extends StatelessWidget {
         return Text(
           message.content,
           style: TextStyle(
-            color: message.senderId ==
-                    (context.read<AuthBloc>().state as Authenticated).userId
-                ? Colors.white
-                : Colors.black,
+            color: isMe ? Colors.white : Colors.black,
           ),
         );
-
       case MessageType.image:
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: CachedNetworkImage(
-            imageUrl: message.mediaUrl!,
-            placeholder: (context, url) => const Center(
-              child: CircularProgressIndicator(),
-            ),
-            errorWidget: (context, url, error) => const Icon(Icons.error),
-          ),
-        );
-
+        return _buildImageMessage(context);
       case MessageType.video:
-        return Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.videocam),
-              const SizedBox(width: 8),
-              Text(message.fileName ?? 'Video'),
-            ],
-          ),
-        );
-
+        return _buildVideoMessage(context);
       case MessageType.file:
-        return Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.insert_drive_file),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(message.fileName ?? 'File'),
-                  if (message.fileSize != null)
-                    Text(
-                      _formatFileSize(message.fileSize!),
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        );
+        return _buildFileMessage(context);
     }
   }
 
-  String _formatFileSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  Widget _buildImageMessage(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        // Show full-screen image
+        showDialog(
+          context: context,
+          builder: (context) => Dialog(
+            child: Image.network(message.mediaUrl!),
+          ),
+        );
+      },
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 200),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+            message.mediaUrl!,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return const CircularProgressIndicator();
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoMessage(BuildContext context) {
+    return GestureDetector(
+      onTap: () async {
+        if (message.mediaUrl != null) {
+          final url = Uri.parse(message.mediaUrl!);
+          if (await canLaunchUrl(url)) {
+            await launchUrl(url);
+          }
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.play_circle_outline),
+            const SizedBox(width: 8),
+            Text(message.fileName ?? 'Video'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFileMessage(BuildContext context) {
+    return GestureDetector(
+      onTap: () async {
+        if (message.mediaUrl != null) {
+          final url = Uri.parse(message.mediaUrl!);
+          if (await canLaunchUrl(url)) {
+            await launchUrl(url);
+          }
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.attach_file),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(message.fileName ?? 'File'),
+                if (message.fileSize != null)
+                  Text(
+                    '${(message.fileSize! / 1024).toStringAsFixed(1)} KB',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 } 
